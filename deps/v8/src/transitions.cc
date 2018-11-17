@@ -14,12 +14,11 @@ namespace internal {
 void TransitionsAccessor::Initialize() {
   raw_transitions_ = map_->raw_transitions();
   HeapObject* heap_object;
-  if (raw_transitions_->IsSmi() ||
-      raw_transitions_->IsClearedWeakHeapObject()) {
+  if (raw_transitions_->IsSmi() || raw_transitions_->IsCleared()) {
     encoding_ = kUninitialized;
-  } else if (raw_transitions_->IsWeakHeapObject()) {
+  } else if (raw_transitions_->IsWeak()) {
     encoding_ = kWeakRef;
-  } else if (raw_transitions_->ToStrongHeapObject(&heap_object)) {
+  } else if (raw_transitions_->GetHeapObjectIfStrong(&heap_object)) {
     if (heap_object->IsTransitionArray()) {
       encoding_ = kFullTransitionArray;
     } else {
@@ -34,19 +33,19 @@ void TransitionsAccessor::Initialize() {
 #endif
 }
 
-Map* TransitionsAccessor::GetSimpleTransition() {
+Map TransitionsAccessor::GetSimpleTransition() {
   switch (encoding()) {
     case kWeakRef:
-      return Map::cast(raw_transitions_->ToWeakHeapObject());
+      return Map::cast(raw_transitions_->GetHeapObjectAssumeWeak());
     default:
-      return nullptr;
+      return Map();
   }
 }
 
-bool TransitionsAccessor::HasSimpleTransitionTo(Map* map) {
+bool TransitionsAccessor::HasSimpleTransitionTo(Map map) {
   switch (encoding()) {
     case kWeakRef:
-      return raw_transitions_->ToWeakHeapObject() == map;
+      return raw_transitions_->GetHeapObjectAssumeWeak() == map;
     case kPrototypeInfo:
     case kUninitialized:
     case kFullTransitionArray:
@@ -75,8 +74,8 @@ void TransitionsAccessor::Insert(Handle<Name> name, Handle<Map> target,
 
   bool is_special_transition = flag == SPECIAL_TRANSITION;
   // If the map has a simple transition, check if it should be overwritten.
-  Map* simple_transition = GetSimpleTransition();
-  if (simple_transition != nullptr) {
+  Map simple_transition = GetSimpleTransition();
+  if (!simple_transition.is_null()) {
     Name* key = GetSimpleTransitionKey(simple_transition);
     PropertyDetails old_details = GetSimpleTargetDetails(simple_transition);
     PropertyDetails new_details = is_special_transition
@@ -95,7 +94,7 @@ void TransitionsAccessor::Insert(Handle<Name> name, Handle<Map> target,
     // Reload state; allocations might have caused it to be cleared.
     Reload();
     simple_transition = GetSimpleTransition();
-    if (simple_transition != nullptr) {
+    if (!simple_transition.is_null()) {
       DCHECK_EQ(*map, simple_transition);
       if (encoding_ == kWeakRef) {
         result->Set(0, GetSimpleTransitionKey(simple_transition),
@@ -207,31 +206,31 @@ void TransitionsAccessor::Insert(Handle<Name> name, Handle<Map> target,
   ReplaceTransitions(MaybeObject::FromObject(*result));
 }
 
-Map* TransitionsAccessor::SearchTransition(Name* name, PropertyKind kind,
-                                           PropertyAttributes attributes) {
+Map TransitionsAccessor::SearchTransition(Name* name, PropertyKind kind,
+                                          PropertyAttributes attributes) {
   DCHECK(name->IsUniqueName());
   switch (encoding()) {
     case kPrototypeInfo:
     case kUninitialized:
-      return nullptr;
+      return Map();
     case kWeakRef: {
-      Map* map = Map::cast(raw_transitions_->ToWeakHeapObject());
-      if (!IsMatchingMap(map, name, kind, attributes)) return nullptr;
+      Map map = Map::cast(raw_transitions_->GetHeapObjectAssumeWeak());
+      if (!IsMatchingMap(map, name, kind, attributes)) return Map();
       return map;
     }
     case kFullTransitionArray: {
       int transition = transitions()->Search(kind, name, attributes);
-      if (transition == kNotFound) return nullptr;
+      if (transition == kNotFound) return Map();
       return transitions()->GetTarget(transition);
     }
   }
   UNREACHABLE();
 }
 
-Map* TransitionsAccessor::SearchSpecial(Symbol* name) {
-  if (encoding() != kFullTransitionArray) return nullptr;
+Map TransitionsAccessor::SearchSpecial(Symbol* name) {
+  if (encoding() != kFullTransitionArray) return Map();
   int transition = transitions()->SearchSpecial(name);
-  if (transition == kNotFound) return nullptr;
+  if (transition == kNotFound) return Map();
   return transitions()->GetTarget(transition);
 }
 
@@ -249,8 +248,8 @@ MaybeHandle<Map> TransitionsAccessor::FindTransitionToDataProperty(
   DCHECK(name->IsUniqueName());
   DisallowHeapAllocation no_gc;
   PropertyAttributes attributes = name->IsPrivate() ? DONT_ENUM : NONE;
-  Map* target = SearchTransition(*name, kData, attributes);
-  if (target == nullptr) return MaybeHandle<Map>();
+  Map target = SearchTransition(*name, kData, attributes);
+  if (target.is_null()) return MaybeHandle<Map>();
   PropertyDetails details = target->GetLastDescriptorDetails();
   DCHECK_EQ(attributes, details.attributes());
   DCHECK_EQ(kData, details.kind());
@@ -268,7 +267,7 @@ Handle<String> TransitionsAccessor::ExpectedTransitionKey() {
     case kFullTransitionArray:
       return Handle<String>::null();
     case kWeakRef: {
-      Map* target = Map::cast(raw_transitions_->ToWeakHeapObject());
+      Map target = Map::cast(raw_transitions_->GetHeapObjectAssumeWeak());
       PropertyDetails details = GetSimpleTargetDetails(target);
       if (details.location() != kField) return Handle<String>::null();
       DCHECK_EQ(kData, details.kind());
@@ -295,7 +294,7 @@ bool TransitionsAccessor::CanHaveMoreTransitions() {
 }
 
 // static
-bool TransitionsAccessor::IsMatchingMap(Map* target, Name* name,
+bool TransitionsAccessor::IsMatchingMap(Map target, Name* name,
                                         PropertyKind kind,
                                         PropertyAttributes attributes) {
   int descriptor = target->LastAdded();
@@ -317,10 +316,10 @@ bool TransitionArray::CompactPrototypeTransitionArray(Isolate* isolate,
   }
   int new_number_of_transitions = 0;
   for (int i = 0; i < number_of_transitions; i++) {
-    MaybeObject* target = array->Get(header + i);
-    DCHECK(target->IsClearedWeakHeapObject() ||
-           (target->IsWeakHeapObject() && target->ToWeakHeapObject()->IsMap()));
-    if (!target->IsClearedWeakHeapObject()) {
+    MaybeObject target = array->Get(header + i);
+    DCHECK(target->IsCleared() ||
+           (target->IsWeak() && target->GetHeapObject()->IsMap()));
+    if (!target->IsCleared()) {
       if (new_number_of_transitions != i) {
         array->Set(header + new_number_of_transitions, target);
       }
@@ -328,7 +327,7 @@ bool TransitionArray::CompactPrototypeTransitionArray(Isolate* isolate,
     }
   }
   // Fill slots that became free with undefined value.
-  MaybeObject* undefined =
+  MaybeObject undefined =
       MaybeObject::FromObject(*isolate->factory()->undefined_value());
   for (int i = new_number_of_transitions; i < number_of_transitions; i++) {
     array->Set(header + i, undefined);
@@ -397,11 +396,12 @@ Handle<Map> TransitionsAccessor::GetPrototypeTransition(
   WeakFixedArray* cache = GetPrototypeTransitions();
   int length = TransitionArray::NumberOfPrototypeTransitions(cache);
   for (int i = 0; i < length; i++) {
-    MaybeObject* target =
+    MaybeObject target =
         cache->Get(TransitionArray::kProtoTransitionHeaderSize + i);
-    DCHECK(target->IsClearedWeakHeapObject() || target->IsWeakHeapObject());
-    if (!target->IsClearedWeakHeapObject()) {
-      Map* map = Map::cast(target->ToWeakHeapObject());
+    DCHECK(target->IsWeakOrCleared());
+    HeapObject* heap_object;
+    if (target->GetHeapObjectIfWeak(&heap_object)) {
+      Map map = Map::cast(heap_object);
       if (map->prototype() == *prototype) {
         return handle(map, isolate_);
       }
@@ -441,20 +441,19 @@ int TransitionsAccessor::NumberOfTransitions() {
 }
 
 void TransitionArray::Zap(Isolate* isolate) {
-  MemsetPointer(
-      data_start() + kPrototypeTransitionsIndex,
-      MaybeObject::FromObject(ReadOnlyRoots(isolate).the_hole_value()),
-      length() - kPrototypeTransitionsIndex);
+  MemsetPointer(ObjectSlot(data_start() + kPrototypeTransitionsIndex),
+                ReadOnlyRoots(isolate).the_hole_value(),
+                length() - kPrototypeTransitionsIndex);
   SetNumberOfTransitions(0);
 }
 
-void TransitionsAccessor::ReplaceTransitions(MaybeObject* new_transitions) {
+void TransitionsAccessor::ReplaceTransitions(MaybeObject new_transitions) {
   if (encoding() == kFullTransitionArray) {
     TransitionArray* old_transitions = transitions();
 #if DEBUG
-    CheckNewTransitionsAreConsistent(old_transitions,
-                                     new_transitions->ToStrongHeapObject());
-    DCHECK(old_transitions != new_transitions->ToStrongHeapObject());
+    CheckNewTransitionsAreConsistent(
+        old_transitions, new_transitions->GetHeapObjectAssumeStrong());
+    DCHECK(old_transitions != new_transitions->GetHeapObjectAssumeStrong());
 #endif
     // Transition arrays are not shared. When one is replaced, it should not
     // keep referenced objects alive, so we zap it.
@@ -499,7 +498,8 @@ void TransitionsAccessor::TraverseTransitionTreeInternal(
     case kUninitialized:
       break;
     case kWeakRef: {
-      Map* simple_target = Map::cast(raw_transitions_->ToWeakHeapObject());
+      Map simple_target =
+          Map::cast(raw_transitions_->GetHeapObjectAssumeWeak());
       TransitionsAccessor(isolate_, simple_target, no_gc)
           .TraverseTransitionTreeInternal(callback, data, no_gc);
       break;
@@ -510,13 +510,14 @@ void TransitionsAccessor::TraverseTransitionTreeInternal(
         int length = TransitionArray::NumberOfPrototypeTransitions(proto_trans);
         for (int i = 0; i < length; ++i) {
           int index = TransitionArray::kProtoTransitionHeaderSize + i;
-          MaybeObject* target = proto_trans->Get(index);
-          DCHECK(target->IsClearedWeakHeapObject() ||
-                 target->IsWeakHeapObject());
-          if (target->IsClearedWeakHeapObject()) continue;
-          TransitionsAccessor(isolate_, Map::cast(target->ToWeakHeapObject()),
-                              no_gc)
-              .TraverseTransitionTreeInternal(callback, data, no_gc);
+          MaybeObject target = proto_trans->Get(index);
+          HeapObject* heap_object;
+          if (target->GetHeapObjectIfWeak(&heap_object)) {
+            TransitionsAccessor(isolate_, Map::cast(heap_object), no_gc)
+                .TraverseTransitionTreeInternal(callback, data, no_gc);
+          } else {
+            DCHECK(target->IsCleared());
+          }
         }
       }
       for (int i = 0; i < transitions()->number_of_transitions(); ++i) {
@@ -536,7 +537,7 @@ void TransitionsAccessor::CheckNewTransitionsAreConsistent(
   DCHECK_EQ(kFullTransitionArray, encoding());
   TransitionArray* new_transitions = TransitionArray::cast(transitions);
   for (int i = 0; i < old_transitions->number_of_transitions(); i++) {
-    Map* target = old_transitions->GetTarget(i);
+    Map target = old_transitions->GetTarget(i);
     if (target->instance_descriptors() == map_->instance_descriptors()) {
       Name* key = old_transitions->GetKey(i);
       int new_target_index;
@@ -564,7 +565,7 @@ int TransitionArray::SearchDetails(int transition, PropertyKind kind,
   Name* key = GetKey(transition);
   for (; transition < nof_transitions && GetKey(transition) == key;
        transition++) {
-    Map* target = GetTarget(transition);
+    Map target = GetTarget(transition);
     PropertyDetails target_details =
         TransitionsAccessor::GetTargetDetails(key, target);
 
@@ -595,11 +596,11 @@ void TransitionArray::Sort() {
   ReadOnlyRoots roots = GetReadOnlyRoots();
   for (int i = 1; i < length; i++) {
     Name* key = GetKey(i);
-    MaybeObject* target = GetRawTarget(i);
+    MaybeObject target = GetRawTarget(i);
     PropertyKind kind = kData;
     PropertyAttributes attributes = NONE;
     if (!TransitionsAccessor::IsSpecialTransition(roots, key)) {
-      Map* target_map = TransitionsAccessor::GetTargetFromRaw(target);
+      Map target_map = TransitionsAccessor::GetTargetFromRaw(target);
       PropertyDetails details =
           TransitionsAccessor::GetTargetDetails(key, target_map);
       kind = details.kind();
@@ -608,11 +609,11 @@ void TransitionArray::Sort() {
     int j;
     for (j = i - 1; j >= 0; j--) {
       Name* temp_key = GetKey(j);
-      MaybeObject* temp_target = GetRawTarget(j);
+      MaybeObject temp_target = GetRawTarget(j);
       PropertyKind temp_kind = kData;
       PropertyAttributes temp_attributes = NONE;
       if (!TransitionsAccessor::IsSpecialTransition(roots, temp_key)) {
-        Map* temp_target_map =
+        Map temp_target_map =
             TransitionsAccessor::GetTargetFromRaw(temp_target);
         PropertyDetails details =
             TransitionsAccessor::GetTargetDetails(temp_key, temp_target_map);

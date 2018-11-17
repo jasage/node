@@ -4,7 +4,7 @@
 
 #include "src/assembler-inl.h"
 #include "src/compiler/pipeline.h"
-#include "test/unittests/compiler/instruction-sequence-unittest.h"
+#include "test/unittests/compiler/backend/instruction-sequence-unittest.h"
 
 namespace v8 {
 namespace internal {
@@ -711,8 +711,6 @@ class SlotConstraintTest : public RegisterAllocatorTest,
 
 }  // namespace
 
-#if GTEST_HAS_COMBINE
-
 TEST_P(SlotConstraintTest, SlotConstraint) {
   StartBlock();
   VReg p_0;
@@ -761,8 +759,6 @@ INSTANTIATE_TEST_CASE_P(
     RegisterAllocatorTest, SlotConstraintTest,
     ::testing::Combine(::testing::ValuesIn(kParameterTypes),
                        ::testing::Range(0, SlotConstraintTest::kMaxVariant)));
-
-#endif  // GTEST_HAS_COMBINE
 
 }  // namespace compiler
 }  // namespace internal

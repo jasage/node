@@ -123,7 +123,8 @@ class Expectations {
         constness = PropertyConstness::kMutable;
       }
       if (representation.IsHeapObject() && !FieldType::cast(*value)->IsAny()) {
-        value = FieldType::Any(isolate_);
+        // TODO(3770): Drop extra Handle constructor call after migration.
+        value = Handle<Object>(FieldType::Any(isolate_));
       }
     }
     constnesses_[index] = constness;
@@ -252,7 +253,8 @@ class Expectations {
     CHECK(index < number_of_properties_);
     representations_[index] = Representation::Tagged();
     if (locations_[index] == kField) {
-      values_[index] = FieldType::Any(isolate_);
+      // TODO(3770): Drop extra Handle constructor call after migration.
+      values_[index] = Handle<Object>(FieldType::Any(isolate_));
     }
   }
 
@@ -272,7 +274,7 @@ class Expectations {
     Object* expected_value = *values_[descriptor];
     if (details.location() == kField) {
       if (details.kind() == kData) {
-        FieldType* type = descriptors->GetFieldType(descriptor);
+        FieldType type = descriptors->GetFieldType(descriptor);
         return FieldType::cast(expected_value) == type;
       } else {
         // kAccessor
@@ -295,7 +297,7 @@ class Expectations {
     UNREACHABLE();
   }
 
-  bool Check(Map* map, int expected_nof) const {
+  bool Check(Map map, int expected_nof) const {
     CHECK_EQ(elements_kind_, map->elements_kind());
     CHECK(number_of_properties_ <= MAX_PROPERTIES);
     CHECK_EQ(expected_nof, map->NumberOfOwnDescriptors());
@@ -316,8 +318,7 @@ class Expectations {
     return true;
   }
 
-  bool Check(Map* map) const { return Check(map, number_of_properties_); }
-
+  bool Check(Map map) const { return Check(map, number_of_properties_); }
 
   //
   // Helper methods for initializing expectations and adding properties to
@@ -370,9 +371,8 @@ class Expectations {
                  heap_type);
 
     Handle<String> name = MakeName("prop", property_index);
-    return Map::TransitionToDataProperty(
-        isolate_, map, name, value, attributes, constness,
-        Object::CERTAINLY_NOT_STORE_FROM_KEYED);
+    return Map::TransitionToDataProperty(isolate_, map, name, value, attributes,
+                                         constness, StoreOrigin::kNamed);
   }
 
   Handle<Map> TransitionToDataConstant(Handle<Map> map,
@@ -383,9 +383,9 @@ class Expectations {
     SetDataConstant(property_index, attributes, value);
 
     Handle<String> name = MakeName("prop", property_index);
-    return Map::TransitionToDataProperty(
-        isolate_, map, name, value, attributes, PropertyConstness::kConst,
-        Object::CERTAINLY_NOT_STORE_FROM_KEYED);
+    return Map::TransitionToDataProperty(isolate_, map, name, value, attributes,
+                                         PropertyConstness::kConst,
+                                         StoreOrigin::kNamed);
   }
 
   Handle<Map> FollowDataTransition(Handle<Map> map,
@@ -399,9 +399,9 @@ class Expectations {
                  heap_type);
 
     Handle<String> name = MakeName("prop", property_index);
-    Map* target = TransitionsAccessor(isolate_, map)
-                      .SearchTransition(*name, kData, attributes);
-    CHECK_NOT_NULL(target);
+    Map target = TransitionsAccessor(isolate_, map)
+                     .SearchTransition(*name, kData, attributes);
+    CHECK(!target.is_null());
     return handle(target, isolate_);
   }
 
@@ -657,7 +657,9 @@ static void TestGeneralizeField(int detach_property_at_index,
   CanonicalHandleScope canonical(isolate);
   JSHeapBroker broker(isolate, &zone);
   CompilationDependencies dependencies(isolate, &zone);
-  dependencies.DependOnFieldType(MapRef(&broker, map), property_index);
+  MapRef map_ref(&broker, map);
+  map_ref.SerializeOwnDescriptors();
+  dependencies.DependOnFieldType(map_ref, property_index);
 
   Handle<Map> field_owner(map->FindFieldOwner(isolate, property_index),
                           isolate);
@@ -694,7 +696,7 @@ static void TestGeneralizeField(int detach_property_at_index,
 
   {
     // Check that all previous maps are not stable.
-    Map* tmp = *new_map;
+    Map tmp = *new_map;
     while (true) {
       Object* back = tmp->GetBackPointer();
       if (back->IsUndefined(isolate)) break;
@@ -1029,7 +1031,9 @@ static void TestReconfigureDataFieldAttribute_GeneralizeField(
   CanonicalHandleScope canonical(isolate);
   JSHeapBroker broker(isolate, &zone);
   CompilationDependencies dependencies(isolate, &zone);
-  dependencies.DependOnFieldType(MapRef(&broker, map), kSplitProp);
+  MapRef map_ref(&broker, map);
+  map_ref.SerializeOwnDescriptors();
+  dependencies.DependOnFieldType(map_ref, kSplitProp);
 
   // Reconfigure attributes of property |kSplitProp| of |map2| to NONE, which
   // should generalize representations in |map1|.
@@ -1113,7 +1117,9 @@ static void TestReconfigureDataFieldAttribute_GeneralizeFieldTrivial(
   CanonicalHandleScope canonical(isolate);
   JSHeapBroker broker(isolate, &zone);
   CompilationDependencies dependencies(isolate, &zone);
-  dependencies.DependOnFieldType(MapRef(&broker, map), kSplitProp);
+  MapRef map_ref(&broker, map);
+  map_ref.SerializeOwnDescriptors();
+  dependencies.DependOnFieldType(map_ref, kSplitProp);
 
   // Reconfigure attributes of property |kSplitProp| of |map2| to NONE, which
   // should generalize representations in |map1|.
@@ -1794,7 +1800,9 @@ static void TestReconfigureElementsKind_GeneralizeField(
   CanonicalHandleScope canonical(isolate);
   JSHeapBroker broker(isolate, &zone);
   CompilationDependencies dependencies(isolate, &zone);
-  dependencies.DependOnFieldType(MapRef(&broker, map), kDiffProp);
+  MapRef map_ref(&broker, map);
+  map_ref.SerializeOwnDescriptors();
+  dependencies.DependOnFieldType(map_ref, kDiffProp);
 
   // Reconfigure elements kinds of |map2|, which should generalize
   // representations in |map|.
@@ -1827,7 +1835,7 @@ static void TestReconfigureElementsKind_GeneralizeField(
   {
     MapHandles map_list;
     map_list.push_back(updated_map);
-    Map* transitioned_map =
+    Map transitioned_map =
         map2->FindElementsKindTransitionedMap(isolate, map_list);
     CHECK_EQ(*updated_map, transitioned_map);
   }
@@ -1889,7 +1897,9 @@ static void TestReconfigureElementsKind_GeneralizeFieldTrivial(
   CanonicalHandleScope canonical(isolate);
   JSHeapBroker broker(isolate, &zone);
   CompilationDependencies dependencies(isolate, &zone);
-  dependencies.DependOnFieldType(MapRef(&broker, map), kDiffProp);
+  MapRef map_ref(&broker, map);
+  map_ref.SerializeOwnDescriptors();
+  dependencies.DependOnFieldType(map_ref, kDiffProp);
 
   // Reconfigure elements kinds of |map2|, which should generalize
   // representations in |map|.
@@ -1923,7 +1933,7 @@ static void TestReconfigureElementsKind_GeneralizeFieldTrivial(
   {
     MapHandles map_list;
     map_list.push_back(updated_map);
-    Map* transitioned_map =
+    Map transitioned_map =
         map2->FindElementsKindTransitionedMap(isolate, map_list);
     CHECK_EQ(*updated_map, transitioned_map);
   }
@@ -2178,9 +2188,9 @@ TEST(ReconfigurePropertySplitMapTransitionsOverflow) {
       }
 
       Handle<String> name = MakeName("prop", i);
-      Map* target = TransitionsAccessor(isolate, map2)
-                        .SearchTransition(*name, kData, NONE);
-      CHECK_NOT_NULL(target);
+      Map target = TransitionsAccessor(isolate, map2)
+                       .SearchTransition(*name, kData, NONE);
+      CHECK(!target.is_null());
       map2 = handle(target, isolate);
     }
 

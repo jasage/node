@@ -32,6 +32,8 @@ enum AllocationFlags {
   PRETENURE = 1 << 3,
 };
 
+// This is the only place allowed to include the platform-specific headers.
+#define INCLUDED_FROM_MACRO_ASSEMBLER_H
 #if V8_TARGET_ARCH_IA32
 #include "src/ia32/macro-assembler-ia32.h"
 #elif V8_TARGET_ARCH_X64
@@ -57,6 +59,7 @@ enum AllocationFlags {
 #else
 #error Unsupported target architecture.
 #endif
+#undef INCLUDED_FROM_MACRO_ASSEMBLER_H
 
 namespace v8 {
 namespace internal {
@@ -209,7 +212,7 @@ class NoRootArrayScope {
 // either registers or immediate values. Used to make sure that the
 // caller provides exactly the expected number of parameters to the
 // callee.
-class ParameterCount BASE_EMBEDDED {
+class ParameterCount {
  public:
   explicit ParameterCount(Register reg) : reg_(reg), immediate_(0) {}
   explicit ParameterCount(uint16_t imm) : reg_(no_reg), immediate_(imm) {}

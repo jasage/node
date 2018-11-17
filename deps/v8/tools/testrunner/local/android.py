@@ -9,6 +9,7 @@ Wrapper around the Android device abstraction from src/build/android.
 import logging
 import os
 import sys
+import time
 
 
 BASE_DIR = os.path.normpath(
@@ -18,8 +19,9 @@ DEVICE_DIR = '/data/local/tmp/v8/'
 
 
 class TimeoutException(Exception):
-  def __init__(self, timeout):
+  def __init__(self, timeout, output=None):
     self.timeout = timeout
+    self.output = output
 
 
 class CommandFailedException(Exception):
@@ -49,8 +51,14 @@ class _Driver(object):
     devil_chromium.Initialize()
 
     if not device:
-      # Detect attached device if not specified.
-      devices = adb_wrapper.AdbWrapper.Devices()
+      # Detect attached device if not specified. Retry 3 times with 60 second
+      # sleep in-between.
+      for _ in range(3):
+        devices = adb_wrapper.AdbWrapper.Devices()
+        if devices:
+          break
+        logging.warning('Failed to detect device. Will retry in 60 secs...')
+        time.sleep(60)
       assert devices, 'No devices detected'
       assert len(devices) == 1, 'Multiple devices detected.'
       device = str(devices[0])
@@ -170,8 +178,8 @@ class _Driver(object):
         return '\n'.join(output)
       except device_errors.AdbCommandFailedError as e:
         raise CommandFailedException(e.status, e.output)
-      except device_errors.CommandTimeoutError:
-        raise TimeoutException(timeout)
+      except device_errors.CommandTimeoutError as e:
+        raise TimeoutException(timeout, e.output)
 
 
     if logcat_file:

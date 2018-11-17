@@ -10,6 +10,7 @@
 #include "src/objects.h"
 #include "src/objects/descriptor-array.h"
 #include "src/objects/map.h"
+#include "src/objects/maybe-object.h"
 #include "src/objects/name.h"
 
 // Has to be the last include (doesn't have include guards):
@@ -37,7 +38,7 @@ namespace internal {
 // cleared when the map they refer to is not otherwise reachable.
 class TransitionsAccessor {
  public:
-  TransitionsAccessor(Isolate* isolate, Map* map, DisallowHeapAllocation* no_gc)
+  TransitionsAccessor(Isolate* isolate, Map map, DisallowHeapAllocation* no_gc)
       : isolate_(isolate), map_(map) {
     Initialize();
     USE(no_gc);
@@ -53,10 +54,10 @@ class TransitionsAccessor {
   // This TransitionsAccessor instance is unusable after this operation.
   void Insert(Handle<Name> name, Handle<Map> target, SimpleTransitionFlag flag);
 
-  Map* SearchTransition(Name* name, PropertyKind kind,
-                        PropertyAttributes attributes);
+  Map SearchTransition(Name* name, PropertyKind kind,
+                       PropertyAttributes attributes);
 
-  Map* SearchSpecial(Symbol* name);
+  Map SearchSpecial(Symbol* name);
   // Returns true for non-property transitions like elements kind, or
   // or frozen/sealed transitions.
   static bool IsSpecialTransition(ReadOnlyRoots roots, Name* name);
@@ -79,14 +80,14 @@ class TransitionsAccessor {
   static const int kMaxNumberOfTransitions = 1024 + 512;
   bool CanHaveMoreTransitions();
   inline Name* GetKey(int transition_number);
-  inline Map* GetTarget(int transition_number);
-  static inline PropertyDetails GetTargetDetails(Name* name, Map* target);
+  inline Map GetTarget(int transition_number);
+  static inline PropertyDetails GetTargetDetails(Name* name, Map target);
 
-  static bool IsMatchingMap(Map* target, Name* name, PropertyKind kind,
+  static bool IsMatchingMap(Map target, Name* name, PropertyKind kind,
                             PropertyAttributes attributes);
 
   // ===== ITERATION =====
-  typedef void (*TraverseCallback)(Map* map, void* data);
+  typedef void (*TraverseCallback)(Map map, void* data);
 
   // Traverse the transition tree in postorder.
   void TraverseTransitionTree(TraverseCallback callback, void* data) {
@@ -108,7 +109,7 @@ class TransitionsAccessor {
 
 #if DEBUG || OBJECT_PRINT
   void PrintTransitions(std::ostream& os);
-  static void PrintOneTransition(std::ostream& os, Name* key, Map* target);
+  static void PrintOneTransition(std::ostream& os, Name* key, Map target);
   void PrintTransitionTree();
   void PrintTransitionTree(std::ostream& os, int level,
                            DisallowHeapAllocation* no_gc);
@@ -144,16 +145,11 @@ class TransitionsAccessor {
   friend class MarkCompactCollector;  // For HasSimpleTransitionTo.
   friend class TransitionArray;
 
-  static inline PropertyDetails GetSimpleTargetDetails(Map* transition) {
-    return transition->GetLastDescriptorDetails();
-  }
+  static inline PropertyDetails GetSimpleTargetDetails(Map transition);
 
-  static inline Name* GetSimpleTransitionKey(Map* transition) {
-    int descriptor = transition->LastAdded();
-    return transition->instance_descriptors()->GetKey(descriptor);
-  }
+  static inline Name* GetSimpleTransitionKey(Map transition);
 
-  static inline Map* GetTargetFromRaw(MaybeObject* raw);
+  static inline Map GetTargetFromRaw(MaybeObject raw);
 
   void MarkNeedsReload() {
 #if DEBUG
@@ -163,12 +159,12 @@ class TransitionsAccessor {
 
   void Initialize();
 
-  inline Map* GetSimpleTransition();
-  bool HasSimpleTransitionTo(Map* map);
+  inline Map GetSimpleTransition();
+  bool HasSimpleTransitionTo(Map map);
 
-  void ReplaceTransitions(MaybeObject* new_transitions);
+  void ReplaceTransitions(MaybeObject new_transitions);
 
-  inline Map* GetTargetMapFromWeakRef();
+  inline Map GetTargetMapFromWeakRef();
 
   void EnsureHasFullTransitionArray();
   void SetPrototypeTransitions(Handle<WeakFixedArray> proto_transitions);
@@ -181,8 +177,8 @@ class TransitionsAccessor {
 
   Isolate* isolate_;
   Handle<Map> map_handle_;
-  Map* map_;
-  MaybeObject* raw_transitions_;
+  Map map_;
+  MaybeObject raw_transitions_;
   Encoding encoding_;
 #if DEBUG
   bool needs_reload_;
@@ -213,22 +209,21 @@ class TransitionArray : public WeakFixedArray {
   // Accessors for fetching instance transition at transition number.
   inline void SetKey(int transition_number, Name* value);
   inline Name* GetKey(int transition_number);
-  inline HeapObjectReference** GetKeySlot(int transition_number);
+  inline HeapObjectSlot GetKeySlot(int transition_number);
 
-  inline Map* GetTarget(int transition_number);
-  inline void SetRawTarget(int transition_number, MaybeObject* target);
-  inline MaybeObject* GetRawTarget(int transition_number);
-  inline HeapObjectReference** GetTargetSlot(int transition_number);
+  inline Map GetTarget(int transition_number);
+  inline void SetRawTarget(int transition_number, MaybeObject target);
+  inline MaybeObject GetRawTarget(int transition_number);
+  inline HeapObjectSlot GetTargetSlot(int transition_number);
   inline bool GetTargetIfExists(int transition_number, Isolate* isolate,
-                                Map** target);
+                                Map* target);
 
   // Required for templatized Search interface.
-  static const int kNotFound = -1;
-  Name* GetSortedKey(int transition_number) {
-    return GetKey(transition_number);
-  }
+  static constexpr int kNotFound = -1;
+
+  inline Name* GetSortedKey(int transition_number);
   int GetSortedKeyIndex(int transition_number) { return transition_number; }
-  inline int number_of_entries() const { return number_of_transitions(); }
+  inline int number_of_entries() const;
 #ifdef DEBUG
   bool IsSortedNoDuplicates(int valid_entries = -1);
 #endif
@@ -260,9 +255,7 @@ class TransitionArray : public WeakFixedArray {
   }
 
   inline int SearchNameForTesting(Name* name,
-                                  int* out_insertion_index = nullptr) {
-    return SearchName(name, out_insertion_index);
-  }
+                                  int* out_insertion_index = nullptr);
 
  private:
   friend class Factory;
@@ -302,9 +295,7 @@ class TransitionArray : public WeakFixedArray {
 
   // Search a non-property transition (like elements kind, observe or frozen
   // transitions).
-  inline int SearchSpecial(Symbol* symbol, int* out_insertion_index = nullptr) {
-    return SearchName(symbol, out_insertion_index);
-  }
+  inline int SearchSpecial(Symbol* symbol, int* out_insertion_index = nullptr);
   // Search a first transition for a given property name.
   inline int SearchName(Name* name, int* out_insertion_index = nullptr);
   int SearchDetails(int transition, PropertyKind kind,
@@ -337,7 +328,7 @@ class TransitionArray : public WeakFixedArray {
                                    PropertyKind kind2,
                                    PropertyAttributes attributes2);
 
-  inline void Set(int transition_number, Name* key, MaybeObject* target);
+  inline void Set(int transition_number, Name* key, MaybeObject target);
 
   void Zap(Isolate* isolate);
 

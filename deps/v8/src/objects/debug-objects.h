@@ -21,9 +21,6 @@ class BytecodeArray;
 // debugged.
 class DebugInfo : public Struct, public NeverReadOnlySpaceObject {
  public:
-  using NeverReadOnlySpaceObject::GetHeap;
-  using NeverReadOnlySpaceObject::GetIsolate;
-
   enum Flag {
     kNone = 0,
     kHasBreakInfo = 1 << 0,
@@ -87,6 +84,10 @@ class DebugInfo : public Struct, public NeverReadOnlySpaceObject {
   // The original uninstrumented bytecode array for functions with break
   // points - the instrumented bytecode is held in the shared function info.
   DECL_ACCESSORS(original_bytecode_array, Object)
+
+  // The debug instrumented bytecode array for functions with break points
+  // - also pointed to by the shared function info.
+  DECL_ACCESSORS(debug_bytecode_array, Object)
 
   // Fixed array holding status information for each active break point.
   DECL_ACCESSORS(break_points, FixedArray)
@@ -170,8 +171,10 @@ class DebugInfo : public Struct, public NeverReadOnlySpaceObject {
       kSharedFunctionInfoOffset + kPointerSize;
   static const int kScriptOffset = kDebuggerHintsOffset + kPointerSize;
   static const int kOriginalBytecodeArrayOffset = kScriptOffset + kPointerSize;
-  static const int kBreakPointsStateOffset =
+  static const int kDebugBytecodeArrayOffset =
       kOriginalBytecodeArrayOffset + kPointerSize;
+  static const int kBreakPointsStateOffset =
+      kDebugBytecodeArrayOffset + kPointerSize;
   static const int kFlagsOffset = kBreakPointsStateOffset + kPointerSize;
   static const int kCoverageInfoOffset = kFlagsOffset + kPointerSize;
   static const int kSize = kCoverageInfoOffset + kPointerSize;

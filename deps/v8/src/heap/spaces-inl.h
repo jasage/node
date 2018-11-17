@@ -5,6 +5,8 @@
 #ifndef V8_HEAP_SPACES_INL_H_
 #define V8_HEAP_SPACES_INL_H_
 
+#include "src/base/atomic-utils.h"
+#include "src/base/bounded-page-allocator.h"
 #include "src/base/v8-fallthrough.h"
 #include "src/heap/incremental-marking.h"
 #include "src/heap/spaces.h"
@@ -92,6 +94,27 @@ HeapObject* HeapObjectIterator::FromCurrentPage() {
   return nullptr;
 }
 
+void Space::IncrementExternalBackingStoreBytes(ExternalBackingStoreType type,
+                                               size_t amount) {
+  base::CheckedIncrement(&external_backing_store_bytes_[type], amount);
+  heap()->IncrementExternalBackingStoreBytes(type, amount);
+}
+
+void Space::DecrementExternalBackingStoreBytes(ExternalBackingStoreType type,
+                                               size_t amount) {
+  base::CheckedDecrement(&external_backing_store_bytes_[type], amount);
+  heap()->DecrementExternalBackingStoreBytes(type, amount);
+}
+
+void Space::MoveExternalBackingStoreBytes(ExternalBackingStoreType type,
+                                          Space* from, Space* to,
+                                          size_t amount) {
+  if (from == to) return;
+
+  base::CheckedDecrement(&(from->external_backing_store_bytes_[type]), amount);
+  base::CheckedIncrement(&(to->external_backing_store_bytes_[type]), amount);
+}
+
 // -----------------------------------------------------------------------------
 // SemiSpace
 
@@ -129,10 +152,6 @@ bool NewSpace::ContainsSlow(Address a) {
 
 bool NewSpace::ToSpaceContainsSlow(Address a) {
   return to_space_.ContainsSlow(a);
-}
-
-bool NewSpace::FromSpaceContainsSlow(Address a) {
-  return from_space_.ContainsSlow(a);
 }
 
 bool NewSpace::ToSpaceContains(Object* o) { return to_space_.Contains(o); }
@@ -187,6 +206,28 @@ MemoryChunk* MemoryChunk::FromAnyPointerAddress(Heap* heap, Address addr) {
     chunk = MemoryChunk::FromAddress(addr);
   }
   return chunk;
+}
+
+void MemoryChunk::IncrementExternalBackingStoreBytes(
+    ExternalBackingStoreType type, size_t amount) {
+  base::CheckedIncrement(&external_backing_store_bytes_[type], amount);
+  owner()->IncrementExternalBackingStoreBytes(type, amount);
+}
+
+void MemoryChunk::DecrementExternalBackingStoreBytes(
+    ExternalBackingStoreType type, size_t amount) {
+  base::CheckedDecrement(&external_backing_store_bytes_[type], amount);
+  owner()->DecrementExternalBackingStoreBytes(type, amount);
+}
+
+void MemoryChunk::MoveExternalBackingStoreBytes(ExternalBackingStoreType type,
+                                                MemoryChunk* from,
+                                                MemoryChunk* to,
+                                                size_t amount) {
+  base::CheckedDecrement(&(from->external_backing_store_bytes_[type]), amount);
+  base::CheckedIncrement(&(to->external_backing_store_bytes_[type]), amount);
+  Space::MoveExternalBackingStoreBytes(type, from->owner(), to->owner(),
+                                       amount);
 }
 
 void Page::MarkNeverAllocateForTesting() {
@@ -464,7 +505,7 @@ AllocationResult NewSpace::AllocateRaw(int size_in_bytes,
 
 V8_WARN_UNUSED_RESULT inline AllocationResult NewSpace::AllocateRawSynchronized(
     int size_in_bytes, AllocationAlignment alignment) {
-  base::LockGuard<base::Mutex> guard(&mutex_);
+  base::MutexGuard guard(&mutex_);
   return AllocateRaw(size_in_bytes, alignment);
 }
 
